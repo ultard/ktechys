@@ -1,0 +1,35 @@
+.technology-card {
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.technology-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.technology-card h3 {
+    margin-top: 0;
+}
+
+.technology-card span {
+    display: block;
+    margin-top: 10px;
+    font-weight: bold;
+}
+
+.status-not-started {
+    border-left: 5px solid #ff6b6b;
+}
+
+.status-in-progress {
+    border-left: 5px solid #4ecdc4;
+}
+
+.status-completed {
+    border-left: 5px solid #45b7d1;
+    background-color: #f0f9ff;
+}
