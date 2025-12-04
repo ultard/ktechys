@@ -14,7 +14,7 @@ import NotificationProvider from './providers/NotificationProvider.jsx';
 
 function App() {
   return (
-    <BrowserRouter basename="ktechys">
+    <BrowserRouter basename="maukys">
       <MuiProvider>
         <NotificationProvider>
           <Navigation />
