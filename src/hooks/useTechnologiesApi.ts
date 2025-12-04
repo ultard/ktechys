@@ -1,123 +1,195 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { Technology, Status } from '@/types';
+import {useState, useEffect, useCallback} from 'react';
+import type {Technology, Status, TechCategory, TechDifficulty} from '../types/technology.ts';
 
-interface ApiTechnology {
+const GITHUB_SEARCH_URL = 'https://api.github.com/search/repositories?q=language:javascript&sort=stars&per_page=10';
+const STORAGE_KEY = 'techTracker_github_data';
+
+interface GithubRepo {
   id: number;
-  title: string;
-  description?: string;
-  status?: Status;
-  notes?: string;
-  category: 'frontend' | 'backend' | 'other';
+  name: string;
+  full_name: string;
+  description: string | null;
+  stargazers_count: number;
+  html_url: string;
+  homepage?: string | null;
+}
+
+function parseRepoToTechnology(repo: GithubRepo): Technology {
+  return {
+    id: repo.id,
+    title: repo.name,
+    status: 'not-started' as Status,
+    description: repo.description || 'Нет описания',
+    category: 'frontend' as TechCategory,
+    difficulty: 'intermediate' as TechDifficulty,
+    notes: '',
+    deadline: undefined,
+    resources: [
+      repo.html_url,
+      repo.homepage || ''
+    ].filter(Boolean) as string[]
+  };
+}
+
+// Загрузка из localStorage с fallback на пустой массив
+function loadFromStorage(): Technology[] {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+// Сохранение в localStorage
+function saveToStorage(data: Technology[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (err) {
+    console.error('Не удалось сохранить в localStorage:', err);
+  }
 }
 
 export default function useTechnologiesApi() {
-  const [technologies, setTechnologies] = useState<Technology[]>([]);
+  const [technologies, setTechnologies] = useState<Technology[]>(loadFromStorage);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const API_URL = 'https://66f49e7e5b9aec9b755fea91.mockapi.io/api/v1/technologies';
+  // Синхронизация с localStorage при любом изменении
+  useEffect(() => {
+    saveToStorage(technologies);
+  }, [technologies]);
 
   const fetchTechnologies = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const response = await fetch(API_URL);
+      const response = await fetch(GITHUB_SEARCH_URL, {
+        headers: {
+          'User-Agent': 'TechTracker-App/1.0',
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
 
-      if (!response.ok) throw new Error(`Ошибка ${response.status}`);
+      if (!response.ok) {
+        throw new Error(`GitHub API: ${response.status} ${response.statusText}`);
+      }
 
-      const data: ApiTechnology[] = await response.json();
-      const adapted: Technology[] = data.map(item => ({
-        id: Number(item.id),
-        title: item.title,
-        description: item.description || '',
-        status: (item.status as Status) || 'not-started',
-        notes: item.notes || '',
-        category: item.category
-      }));
+      const data: { items: GithubRepo[] } = await response.json();
+      const githubRepos = data.items.map(parseRepoToTechnology);
 
-      setTechnologies(adapted);
-    }
-    catch (err: any) {
-      setError(err.message || 'Не удалось загрузить технологии');
+      // Сливаем: GitHub-репозитории (если их нет в локальном хранилище) + все пользовательские изменения
+      setTechnologies(prev => {
+        const existingIds = new Set(prev.map(t => t.id));
+        const newFromGithub = githubRepos.filter(repo => !existingIds.has(repo.id));
+        return [...prev, ...newFromGithub];
+      });
+    } catch (err: any) {
+      setError(err.message || 'Не удалось загрузить данные с GitHub');
       console.error(err);
-    }
-    finally {
+      // Если ошибка — оставляем то, что уже есть в localStorage
+    } finally {
       setLoading(false);
     }
   }, []);
 
-  const addTechnology = async (tech: Omit<Technology, 'id'>) => {
-    try {
-      const response = await fetch(API_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(tech)
-      });
+  const addTechnology = (input: Omit<Technology, 'id'>): Technology => {
+    const newTech: Technology = {
+      id: Date.now(),
+      ...input,
+      status: input.status || 'not-started',
+      notes: input.notes || '',
+      resources: input.resources || [],
+      category: input.category || 'other',
+      difficulty: input.difficulty || 'beginner'
+    };
 
-      if (!response.ok) throw new Error('Не удалось добавить');
+    setTechnologies(prev => [...prev, newTech]);
+    return newTech;
+  };
 
-      const newTech = await response.json();
-      setTechnologies(prev => [...prev, { ...newTech, id: Number(newTech.id) }]);
-      return newTech;
-    }
-    catch (err: any) {
-      throw new Error(err.message || 'Ошибка добавления');
+  const updateStatus = (techId: number, newStatus: Status) => {
+    setTechnologies(prev =>
+      prev.map(tech => tech.id === techId ? {...tech, status: newStatus} : tech)
+    );
+  };
+
+  const updateNotes = (techId: number, newNotes: string) => {
+    setTechnologies(prev =>
+      prev.map(tech => tech.id === techId ? {...tech, notes: newNotes} : tech)
+    );
+  };
+
+  const updateTechnology = (techId: number, updates: Partial<Technology>) => {
+    setTechnologies(prev =>
+      prev.map(t => t.id === techId ? {...t, ...updates} : t)
+    );
+  };
+
+  const deleteTechnology = (techId: number) => {
+    setTechnologies(prev => prev.filter(t => t.id !== techId));
+  };
+
+  const markAllCompleted = () => {
+    setTechnologies(prev =>
+      prev.map(tech => ({...tech, status: 'completed' as Status}))
+    );
+  };
+
+  const resetAll = () => {
+    if (window.confirm('Удалить ВСЁ? Даже добавленные вручную технологии?')) {
+      setTechnologies([]);
+      localStorage.removeItem(STORAGE_KEY);
     }
   };
 
-  const updateStatus = async (id: number, status: Status) => {
-    try {
-      await fetch(`${API_URL}/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status })
-      });
-      setTechnologies(prev =>
-        prev.map(t => t.id === id ? { ...t, status } : t)
-      );
-    }
-    catch {
-      console.error('Ошибка обновления статуса');
-    }
+  const exportData = () => {
+    const data = {
+      exportedAt: new Date().toISOString(),
+      source: 'Technologies',
+      count: technologies.length,
+      technologies
+    };
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `tech-tracker-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
-  const updateNotes = async (id: number, notes: string) => {
-    try {
-      await fetch(`${API_URL}/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ notes })
-      });
-      setTechnologies(prev =>
-        prev.map(t => t.id === id ? { ...t, notes } : t)
-      );
+  const importData = async (file: File) => {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+
+    if (!parsed.technologies || !Array.isArray(parsed.technologies)) {
+      throw new Error('Неверный формат файла: отсутствует массив technologies');
     }
-    catch {
-      console.error('Ошибка обновления заметок');
-    }
+
+    const importedTech: Technology[] = parsed.technologies;
+
+    setTechnologies(prev => {
+      const existingIds = new Set(prev.map(t => t.id));
+      const newTech = importedTech.filter(t => !existingIds.has(t.id));
+      return [...prev, ...newTech];
+    });
+
+    return importedTech.length;
   };
 
-  const resetAll = async () => {
-    if (!confirm('Сбросить весь прогресс?')) return;
-    try {
-      for (const tech of technologies) {
-        await fetch(`${API_URL}/${tech.id}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'not-started', notes: '' })
-        });
-      }
-      await fetchTechnologies();
-    }
-    catch {
-      alert('Ошибка сброса');
-    }
-  };
 
   useEffect(() => {
-    fetchTechnologies();
-  }, [fetchTechnologies]);
+    const saved = loadFromStorage();
+    if (saved.length > 0) {
+      setTechnologies(saved);
+      setLoading(false);
+    } else {
+      fetchTechnologies();
+    }
+  }, []);
 
   return {
     technologies,
@@ -127,6 +199,11 @@ export default function useTechnologiesApi() {
     addTechnology,
     updateStatus,
     updateNotes,
-    resetAll
+    updateTechnology,
+    deleteTechnology,
+    markAllCompleted,
+    resetAll,
+    exportData,
+    importData
   };
 }
